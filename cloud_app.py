@@ -182,6 +182,9 @@ def directory_rows(url):
     content=fetch(url)
     parser=DirectoryParser();parser.base=url;parser.feed(content)
     combined=parser.rows+structured_directory_rows(content,url)
+    page_emails=PaiEmailParser();page_emails.feed(content)
+    if urlparse(url).path.startswith('/paginas/') and page_emails.emails:
+        for row in combined:row['emails']='; '.join(sorted(set(filter(None,re.split(r'[;,\\s]+',row.get('emails',''))))|page_emails.emails))
     # pai.pt search listings may have a different card layout. Read public detail
     # pages linked from the search page as a fallback, with a small request budget.
     if urlparse(url).hostname in ('www.pai.pt','pai.pt') and urlparse(url).path.startswith('/searches'):
@@ -198,6 +201,11 @@ def directory_rows(url):
                         for row in detail_rows:
                             existing=set(filter(None,re.split(r'[;,\s]+',row.get('emails',''))))
                             row['emails']='; '.join(sorted(existing|email_parser.emails))
+                    for existing_row in combined:
+                        if urlparse(existing_row.get('link','')).path==urlparse(link).path:
+                            for found in detail_rows:
+                                for field in ('emails','website','phone','address'):
+                                    if found.get(field) and not existing_row.get(field):existing_row[field]=found[field]
                     combined.extend(detail_rows)
             except (ValueError,OSError,HTTPError):continue
     unique={}
