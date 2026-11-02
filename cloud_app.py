@@ -13,6 +13,14 @@ PORT=int(os.environ.get("PORT","10000"))
 HOST=os.environ.get("HOST","127.0.0.1")
 MAX_BODY=25_000_000
 SCRAPER_ENABLED=os.environ.get('SCRAPER_ENABLED','0')=='1' and os.path.isfile('/usr/bin/google-maps-scraper')
+SCRAPER_BACKEND_URL=os.environ.get('SCRAPER_BACKEND_URL','').rstrip('/')
+def scraper_ready():
+    if SCRAPER_ENABLED:return True
+    if not SCRAPER_BACKEND_URL:return False
+    try:
+        with urlopen(SCRAPER_BACKEND_URL+'/api/health',timeout=5) as response:
+            return bool(json.load(response).get('scraper'))
+    except Exception:return False
 JOB_LOCK=threading.Lock()
 ACTIVE_JOBS=set()
 
@@ -90,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
         path=urlparse(self.path).path
         if path=="/": return self.send((ROOT/"cloud_index.html").read_text(encoding="utf-8"),html=True)
         if path=="/api/config": return self.send({"url":URL,"key":KEY})
-        if path=="/api/health": return self.send({"docker":False,"cloud":True,"scraper":SCRAPER_ENABLED})
+        if path=="/api/health": return self.send({"docker":SCRAPER_ENABLED,"cloud":True,"scraper":scraper_ready()})
         token=self.user()
         if not token: return self.send({"error":"Sesión no válida"},401)
         if path in ("/api/leads","/api/jobs"):
@@ -115,7 +123,16 @@ class Handler(BaseHTTPRequestHandler):
             if status!=200:return self.send({"error":"Sesión no válida"},401)
             owner=me["id"]
             if path=="/api/jobs":
-                if not SCRAPER_ENABLED:return self.send({"error":"El motor de extracción no está disponible"},503)
+                if not SCRAPER_ENABLED:
+                    if not scraper_ready():return self.send({"error":"El motor de extracción no está disponible"},503)
+                    request=Request(SCRAPER_BACKEND_URL+'/api/jobs',data=json.dumps(body).encode(),headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"},method="POST")
+                    try:
+                        with urlopen(request,timeout=20) as upstream:
+                            return self.send(json.load(upstream),upstream.status)
+                    except HTTPError as exc:
+                        try: data=json.load(exc)
+                        except Exception: data={"error":"Error en el motor de búsqueda"}
+                        return self.send(data,exc.code)
                 query=str(body.get('query','')).strip()
                 if not 3<=len(query)<=200:return self.send({"error":"Búsqueda inválida (3–200 caracteres)"},400)
                 depth=int(body.get('depth',1))
