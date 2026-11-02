@@ -45,6 +45,13 @@ class CloudSecurityTests(unittest.TestCase):
         self.assertEqual(parser.links[0][0],'Empresa Exemplo')
         self.assertEqual(len(parser.pages),1)
 
+    def test_directory_card_with_void_tags(self):
+        parser=cloud_app.DirectoryParser()
+        parser.base="https://www.pai.pt/searches"
+        parser.feed('<article class="search-result"><img src="logo.png"><h2>Empresa Exemplo</h2><br><address>Porto</address><a href="tel:220000000">Telefone</a></article>')
+        self.assertEqual(len(parser.rows),1)
+        self.assertEqual(parser.rows[0]['title'],'Empresa Exemplo')
+
     def test_directory_card_and_structured_data(self):
         markup='''<article class="search-result"><h2>Fabíola Cabelereiros &amp; Estética</h2><div class="address">Matosinhos</div><a href="tel:912014323">Ligar</a><a href="mailto:fabiola@example.pt">Email</a></article>'''
         parser=cloud_app.DirectoryParser()
