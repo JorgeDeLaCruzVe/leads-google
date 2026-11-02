@@ -3,7 +3,7 @@ import json, html, os, uuid, csv, io, threading, subprocess, tempfile, socket, i
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
-from urllib.parse import urlparse, quote, urljoin
+from urllib.parse import urlparse, quote, urljoin, parse_qsl, urlencode, urlunparse
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -183,6 +183,7 @@ def directory_rows(url,limit=20):
     visited_pages=set()
     pending=[url]
     visited_details=set()
+    page_signatures=set()
     max_pages=min(60,max(1,(limit+9)//10+3))
     while pending and len(visited_pages)<max_pages and len(visited_details)<limit:
         page=pending.pop(0)
@@ -196,6 +197,17 @@ def directory_rows(url,limit=20):
         combined.extend(parser.rows+structured_directory_rows(content,page))
         if urlparse(page).hostname in ('www.pai.pt','pai.pt') and urlparse(page).path.startswith('/searches'):
             links=PaiLinks(page);links.feed(content)
+            signature=tuple(sorted(link for _,link in links.links))
+            if signature and signature in page_signatures:break
+            if signature:page_signatures.add(signature)
+            # Some PAI layouts omit ordinary next-page anchors. Try the site's page query parameter.
+            if len(visited_details)<limit:
+                parsed=urlparse(page)
+                params=dict(parse_qsl(parsed.query,keep_blank_values=True))
+                number=int(params.get('page','1')) if params.get('page','1').isdigit() else 1
+                params['page']=str(number+1)
+                next_url=urlunparse(parsed._replace(query=urlencode(params)))
+                if next_url not in visited_pages and next_url not in pending:pending.append(next_url)
             for next_page in links.pages:
                 if next_page not in visited_pages and next_page not in pending:pending.append(next_page)
             for name,link in dict.fromkeys(links.links):
