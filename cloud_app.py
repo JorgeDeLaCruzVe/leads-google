@@ -317,6 +317,17 @@ class Handler(BaseHTTPRequestHandler):
             status,me=call("/auth/v1/user",token)
             if status!=200:return self.send({"error":"Sesión no válida"},401)
             owner=me["id"]
+            if path=="/api/jobs/delete":
+                job_id=str(body.get('id',''))
+                try:uuid.UUID(job_id)
+                except ValueError:return self.send({'error':'ID inválido'},400)
+                status,records=call('/rest/v1/jobs?id=eq.'+quote(job_id)+'&select=payload',token)
+                if status!=200:return self.send({'error':'No se pudo consultar la búsqueda'},502)
+                if not records:return self.send({'error':'Búsqueda no encontrada'},404)
+                if records[0]['payload'].get('status')=='En curso':return self.send({'error':'No se puede eliminar una búsqueda en curso'},409)
+                status,_=call('/rest/v1/jobs?id=eq.'+quote(job_id),token,'DELETE')
+                if status not in (200,204):return self.send({'error':'No se pudo eliminar'},502)
+                return self.send({'ok':True})
             if path=="/api/jobs/clear":
                 if body.get("confirm") is not True:return self.send({"error":"Confirmación requerida"},400)
                 status,records=call('/rest/v1/jobs?select=payload',token)
