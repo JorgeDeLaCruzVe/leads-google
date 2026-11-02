@@ -148,7 +148,7 @@ def run_scrape(job,token,owner):
         if job.get('source') in ('url','paginas_amarelas'):
             rows=directory_rows(job['url'])
             timed_out=False
-            if not rows:raise RuntimeError('No se detectaron fichas compatibles. Este directorio requiere un adaptador específico.')
+            if not rows:raise RuntimeError('La página se cargó, pero no se reconocieron fichas de empresas. Es posible que pai.pt utilice una estructura HTML diferente o que el acceso automático esté limitado.')
         else:
             with tempfile.TemporaryDirectory(prefix='leads-scrape-') as folder:
                 query_file=Path(folder)/'queries.txt'
