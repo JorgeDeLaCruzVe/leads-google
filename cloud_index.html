@@ -17,6 +17,15 @@
 let cloudToken="",cloudRefresh="";
 async function cloudLogin(e){e.preventDefault();document.querySelector('#loginError').textContent="";try{const cfg=await (await fetch('/api/config')).json();const res=await fetch(cfg.url+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'apikey':cfg.key,'Content-Type':'application/json'},body:JSON.stringify({email:document.querySelector('#loginEmail').value,password:document.querySelector('#loginPassword').value})});const data=await res.json();if(!res.ok||!data.access_token)throw Error('Credenciales inválidas');cloudToken=data.access_token;cloudRefresh=data.refresh_token;document.querySelector('#loginPassword').value='';document.querySelector('#authGate').style.display='none';await refresh();await health()}catch(err){document.querySelector('#loginError').textContent=err.message}}
 document.querySelector('#loginForm').addEventListener('submit',cloudLogin);
+window.addEventListener('load',async()=>{
+const p=new URLSearchParams(location.hash.slice(1));
+const token=p.get('access_token');
+if(!token)return;
+history.replaceState(null,'',location.pathname);
+cloudToken=token;cloudRefresh=p.get('refresh_token')||'';
+try{await refresh();await health();document.querySelector('#authGate').style.display='none'}
+catch(e){cloudToken='';document.querySelector('#loginError').textContent='No se pudo iniciar sesión'}
+});
 document.querySelector('#googleLogin').addEventListener('click',async()=>{const cfg=await (await fetch('/api/config')).json();location.href=cfg.url+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(location.origin+'/')});
 </script>
 <script>
