@@ -1,5 +1,5 @@
 """Private cloud API for Leads Google. Uses user-scoped Supabase REST; no service-role key."""
-import json, os, uuid, csv, io, threading, subprocess, tempfile, socket, ipaddress, re
+import json, html, os, uuid, csv, io, threading, subprocess, tempfile, socket, ipaddress, re
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -161,11 +161,11 @@ class PaiEmailParser(HTMLParser):
         a=dict(attrs)
         for key in ('href','data-email','data-mail','data-href','onclick','aria-label'):
             value=html.unescape(a.get(key,'') or '')
-            for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}',value,re.I):
+            for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}',value,re.I):
                 self.emails.add(match.lower())
     def handle_data(self,data):
         if '@' in data:
-            for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}',data,re.I):
+            for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}',data,re.I):
                 self.emails.add(match.lower())
 
 def directory_rows(url):
@@ -196,7 +196,7 @@ def directory_rows(url):
                     email_parser=PaiEmailParser();email_parser.feed(detail)
                     if email_parser.emails:
                         for row in detail_rows:
-                            existing=set(filter(None,re.split(r'[;,\\s]+',row.get('emails',''))))
+                            existing=set(filter(None,re.split(r'[;,\s]+',row.get('emails',''))))
                             row['emails']='; '.join(sorted(existing|email_parser.emails))
                     combined.extend(detail_rows)
             except (ValueError,OSError,HTTPError):continue
@@ -209,7 +209,7 @@ def directory_rows(url):
             for field in ('phone','website','address','emails','link'):
                 if row.get(field) and not original.get(field):original[field]=row[field]
             if row.get('emails') and original.get('emails') and row['emails']!=original['emails']:
-                original['emails']='; '.join(sorted(set(filter(None,re.split(r'[;,\\s]+',original['emails']+';'+row['emails'])))))
+                original['emails']='; '.join(sorted(set(filter(None,re.split(r'[;,\s]+',original['emails']+';'+row['emails'])))))
     return list(unique.values())[:500]
 
 def run_scrape(job,token,owner):
