@@ -55,9 +55,17 @@ def run_scrape(job,token,owner):
             result_file=Path(folder)/'results.csv'
             query_file.write_text(job['query']+'\n',encoding='utf-8')
             args=['/usr/bin/google-maps-scraper','-input',str(query_file),'-results',str(result_file),'-depth',str(job['depth']),'-c','1','-exit-on-inactivity','3m']
-            if job['email']: args.append('-email')
-            result=subprocess.run(args,capture_output=True,text=True,timeout=540,check=False)
-            if result.returncode!=0: raise RuntimeError('El motor terminó con error: '+(result.stderr or result.stdout)[-350:])
+            # Email crawling is intentionally deferred: first retrieve Maps businesses reliably.
+            try:
+                result=subprocess.run(args,capture_output=True,text=True,timeout=180,check=False)
+                error=(result.stderr or result.stdout)[-350:]
+                if result.returncode!=0 and not result_file.exists():
+                    raise RuntimeError('El motor terminó con error: '+error)
+                timed_out=False
+            except subprocess.TimeoutExpired:
+                timed_out=True
+                if not result_file.exists():
+                    raise RuntimeError('Google Maps no devolvió resultados en 3 minutos. Prueba una búsqueda más específica o vuelve a intentarlo.')
             if not result_file.exists(): raise RuntimeError('El motor no generó resultados CSV')
             rows=csv_rows(result_file.read_text(encoding='utf-8-sig'))
             added=0
@@ -71,7 +79,7 @@ def run_scrape(job,token,owner):
                 code,_=call('/rest/v1/leads',token,'POST',{'id':key,'owner_id':owner,'payload':merged},{'Prefer':'resolution=merge-duplicates,return=minimal'})
                 if code not in (200,201,204): raise RuntimeError('No se pudieron guardar los contactos')
                 added+=not bool(old)
-            job.update(status='Completada',added=added,detail=f'{len(rows)} resultados, {added} contactos nuevos')
+            job.update(status='Parcial' if timed_out else 'Completada',added=added,detail=f'{len(rows)} resultados, {added} contactos nuevos'+(' (tiempo límite alcanzado)' if timed_out else ''))
     except Exception as exc:
         job.update(status='Error',detail=str(exc)[:450])
     finally:
@@ -139,7 +147,7 @@ class Handler(BaseHTTPRequestHandler):
                 if depth not in (1,3):return self.send({"error":"Profundidad máxima de prueba: 3"},400)
                 with JOB_LOCK:
                     if ACTIVE_JOBS:return self.send({"error":"Ya existe una búsqueda en curso. Intenta más tarde."},429)
-                    job={'id':str(uuid.uuid4()),'query':query,'depth':depth,'email':bool(body.get('email',False)),'status':'En curso','added':0,'detail':'Extrayendo datos'}
+                    job={'id':str(uuid.uuid4()),'query':query,'depth':depth,'email':False,'status':'En curso','added':0,'detail':'Extrayendo datos'}
                     ACTIVE_JOBS.add(job['id'])
                 status,_=call('/rest/v1/jobs',token,'POST',{'id':job['id'],'owner_id':owner,'payload':job})
                 if status not in (200,201,204):
