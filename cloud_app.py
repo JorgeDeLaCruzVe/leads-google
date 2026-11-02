@@ -62,10 +62,11 @@ def run_scrape(job,token,owner):
                 if result.returncode!=0 and not result_file.exists():
                     raise RuntimeError('El motor terminó con error: '+error)
                 timed_out=False
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as exc:
                 timed_out=True
                 if not result_file.exists():
-                    raise RuntimeError('Google Maps no devolvió resultados en 3 minutos. Prueba una búsqueda más específica o vuelve a intentarlo.')
+                    diagnostic=(str(getattr(exc,'stderr',b'') or getattr(exc,'stdout',b'')))[-300:]
+                    raise RuntimeError('El scraper agotó 3 minutos sin generar CSV. '+diagnostic)
             if not result_file.exists(): raise RuntimeError('El motor no generó resultados CSV')
             rows=csv_rows(result_file.read_text(encoding='utf-8-sig'))
             added=0
