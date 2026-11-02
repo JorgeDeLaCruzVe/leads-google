@@ -58,7 +58,8 @@ class DirectoryParser(HTMLParser):
         self.capture=None;self.parts=[];self.link=''
     def handle_starttag(self,tag,attrs):
         a=dict(attrs);classes=' '.join((a.get('class',''),a.get('id',''))).lower()
-        self.stack.append(tag)
+        if tag not in ('area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'):
+            self.stack.append(tag)
         if self.card is None and tag in ('article','li','div','section') and any(w in classes for w in self.CARD_WORDS):
             self.card={'title':'','phone':'','website':'','address':'','emails':'','link':'','source':'Páginas Amarelas' if 'pai.pt' in getattr(self,'base','') else 'URL personalizada'}
             self.card_depth=len(self.stack)
@@ -85,7 +86,10 @@ class DirectoryParser(HTMLParser):
                 if self.card['title'] and (self.card['link'] or self.card['phone'] or self.card['address'] or self.card['website'] or self.card['emails']):
                     self.rows.append(self.card)
                 self.card=None;self.capture=None
-        if self.stack:self.stack.pop()
+        if tag in self.stack:
+            while self.stack:
+                opened=self.stack.pop()
+                if opened==tag:break
 
 def structured_directory_rows(html,base):
     """Parse schema.org JSON-LD business records when directory card markup differs."""
