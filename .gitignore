@@ -1,0 +1,8 @@
+data/
+__pycache__/
+*.pyc
+.env
+.env.*
+.venv/
+qa-data/
+test-results/
