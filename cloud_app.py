@@ -247,7 +247,7 @@ def run_scrape(job,token,owner):
                 if not result_file.exists(): raise RuntimeError('El motor no generó resultados CSV')
                 rows=csv_rows(result_file.read_text(encoding='utf-8-sig'))
         added=0
-        for row in rows[:500]:
+        for row in rows[:job.get('limit',20)]:
             if not row.get('title'): continue
             key=str(uuid.uuid5(uuid.NAMESPACE_URL,owner+'|'+identity(row)))
             code,old=call('/rest/v1/leads?id=eq.'+quote(key)+'&select=payload',token)
@@ -336,11 +336,13 @@ class Handler(BaseHTTPRequestHandler):
                     except (ValueError,OSError) as exc:return self.send({'error':str(exc)},400)
                 query=str(body.get('query','')).strip()
                 if source=='maps' and not 3<=len(query)<=200:return self.send({"error":"Búsqueda inválida (3–200 caracteres)"},400)
+                limit=int(body.get('limit',20))
+                if limit not in (20,50,100,200,500):return self.send({'error':'Cantidad inválida'},400)
                 depth=int(body.get('depth',1))
                 if depth not in (1,3):return self.send({"error":"Profundidad máxima de prueba: 3"},400)
                 with JOB_LOCK:
                     if ACTIVE_JOBS:return self.send({"error":"Ya existe una búsqueda en curso. Intenta más tarde."},429)
-                    job={'id':str(uuid.uuid4()),'query':query if source=='maps' else source_url,'source':source,'url':source_url,'depth':depth,'email':False,'status':'En curso','added':0,'detail':'Extrayendo datos'}
+                    job={'id':str(uuid.uuid4()),'query':query if source=='maps' else source_url,'source':source,'url':source_url,'depth':depth,'limit':limit,'email':False,'status':'En curso','added':0,'detail':'Extrayendo datos'}
                     ACTIVE_JOBS.add(job['id'])
                 status,_=call('/rest/v1/jobs',token,'POST',{'id':job['id'],'owner_id':owner,'payload':job})
                 if status not in (200,201,204):
