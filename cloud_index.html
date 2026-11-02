@@ -20,11 +20,12 @@ document.querySelector('#loginForm').addEventListener('submit',cloudLogin);
 window.addEventListener('load',async()=>{
 const p=new URLSearchParams(location.hash.slice(1));
 const token=p.get('access_token');
-if(!token)return;
+if(!token){const error=p.get('error_description')||new URLSearchParams(location.search).get('error_description');if(error)document.querySelector('#loginError').textContent=error;return;}
 history.replaceState(null,'',location.pathname);
 cloudToken=token;cloudRefresh=p.get('refresh_token')||'';
-try{await refresh();await health();document.querySelector('#authGate').style.display='none'}
-catch(e){cloudToken='';document.querySelector('#loginError').textContent='No se pudo iniciar sesión'}
+document.querySelector('#authGate').style.display='none';
+try{await refresh();await health()}
+catch(e){document.querySelector('#loginError').textContent='Sesión iniciada; error al cargar datos: '+e.message;document.querySelector('#authGate').style.display='flex'}
 });
 document.querySelector('#googleLogin').addEventListener('click',async()=>{const cfg=await (await fetch('/api/config')).json();location.href=cfg.url+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(location.origin+'/')});
 </script>
