@@ -55,7 +55,7 @@ def run_scrape(job,token,owner):
             added=0
             for row in rows[:500]:
                 if not row.get('title'): continue
-                key=identity(row)
+                key=str(uuid.uuid5(uuid.NAMESPACE_URL,owner+'|'+identity(row)))
                 code,old=call('/rest/v1/leads?id=eq.'+quote(key)+'&select=payload',token)
                 if code!=200: raise RuntimeError('No se pudieron consultar los contactos')
                 previous=old[0]['payload'] if old else {}
@@ -141,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
                 for row in rows:
                     if not row.get("title"):continue
                     row={str(k).strip():v for k,v in row.items() if k is not None}
-                    key=identity(row)
+                    key=str(uuid.uuid5(uuid.NAMESPACE_URL,owner+'|'+identity(row)))
                     code,old=call("/rest/v1/leads?id=eq."+quote(key)+"&select=payload",token)
                     if code!=200: return self.send({"error":"Error al consultar contacto"},502)
                     previous=old[0]["payload"] if old else {}
