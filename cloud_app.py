@@ -1,9 +1,10 @@
 """Private cloud API for Leads Google. Uses user-scoped Supabase REST; no service-role key."""
-import json, os, uuid, csv, io, threading, subprocess, tempfile
+import json, os, uuid, csv, io, threading, subprocess, tempfile, socket, ipaddress, re
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, urljoin
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
@@ -48,28 +49,84 @@ def identity(row):
     value=row.get("place_id") or row.get("cid") or row.get("link") or (str(row["title"]).casefold().strip()+"|"+str(row.get("address","")).casefold().strip())
     return str(uuid.uuid5(uuid.NAMESPACE_URL,str(value)))
 
+class DirectoryParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.rows=[]
+        self.current=None
+        self.in_name=False
+        self.name_parts=[]
+    def handle_starttag(self,tag,attrs):
+        a=dict(attrs)
+        if tag in ('article','li','div') and any(word in str(a.get('class','')).lower() for word in ('business-card','listing-card','company-card')):
+            self.current={'title':'','phone':'','website':'','address':''}
+        if self.current is not None:
+            if tag in ('h2','h3'):self.in_name=True;self.name_parts=[]
+            if tag=='a':
+                href=a.get('href','')
+                if href.startswith('tel:'):self.current['phone']=href[4:]
+                elif href.startswith('http'):self.current['website']=href
+    def handle_data(self,data):
+        if self.in_name:self.name_parts.append(data)
+    def handle_endtag(self,tag):
+        if tag in ('h2','h3') and self.in_name:
+            if self.current is not None:self.current['title']=' '.join(self.name_parts).strip()
+            self.in_name=False
+        if tag in ('article','li') and self.current is not None:
+            if self.current['title']:self.rows.append(self.current)
+            self.current=None
+
+def public_url(value):
+    parsed=urlparse(value)
+    if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None,443):
+        raise ValueError('Solo se permiten direcciones HTTPS públicas')
+    hostname=parsed.hostname.lower()
+    if hostname=='localhost' or hostname.endswith(('.local','.internal','.localhost')):
+        raise ValueError('Dirección privada no permitida')
+    for item in socket.getaddrinfo(hostname,443,type=socket.SOCK_STREAM):
+        ip=ipaddress.ip_address(item[4][0])
+        if not ip.is_global:raise ValueError('La dirección no es pública')
+    return value
+
+def directory_rows(url):
+    url=public_url(url)
+    req=Request(url,headers={'User-Agent':'LeadsGoogle/1.0 (directory research; contact admin)','Accept':'text/html'})
+    with urlopen(req,timeout=25) as response:
+        if urlparse(response.url).hostname!=urlparse(url).hostname:raise ValueError('Redirección a otro dominio no permitida')
+        if 'text/html' not in response.headers.get('Content-Type',''):raise ValueError('El enlace no contiene una página HTML')
+        html=response.read(2_000_001)
+    if len(html)>2_000_000:raise ValueError('Página demasiado grande')
+    parser=DirectoryParser()
+    parser.feed(html.decode('utf-8','replace'))
+    return parser.rows[:500]
+
 def run_scrape(job,token,owner):
     try:
-        with tempfile.TemporaryDirectory(prefix='leads-scrape-') as folder:
-            query_file=Path(folder)/'queries.txt'
-            result_file=Path(folder)/'results.csv'
-            query_file.write_text(job['query']+'\n',encoding='utf-8')
-            args=['/usr/bin/google-maps-scraper','-input',str(query_file),'-results',str(result_file),'-depth',str(job['depth']),'-c','1','-exit-on-inactivity','3m']
-            # Email crawling is intentionally deferred: first retrieve Maps businesses reliably.
-            try:
-                result=subprocess.run(args,capture_output=True,text=True,timeout=180,check=False)
-                error=(result.stderr or result.stdout)[-350:]
-                if result.returncode!=0 and not result_file.exists():
-                    raise RuntimeError('El motor terminó con error: '+error)
-                timed_out=False
-            except subprocess.TimeoutExpired as exc:
-                timed_out=True
-                if not result_file.exists():
-                    diagnostic=(str(getattr(exc,'stderr',b'') or getattr(exc,'stdout',b'')))[-300:]
-                    raise RuntimeError('El scraper agotó 3 minutos sin generar CSV. '+diagnostic)
-            if not result_file.exists(): raise RuntimeError('El motor no generó resultados CSV')
-            rows=csv_rows(result_file.read_text(encoding='utf-8-sig'))
-            added=0
+        if job.get('source') in ('url','paginas_amarelas'):
+            rows=directory_rows(job['url'])
+            timed_out=False
+            if not rows:raise RuntimeError('No se detectaron fichas compatibles. Este directorio requiere un adaptador específico.')
+        else:
+            with tempfile.TemporaryDirectory(prefix='leads-scrape-') as folder:
+                query_file=Path(folder)/'queries.txt'
+                result_file=Path(folder)/'results.csv'
+                query_file.write_text(job['query']+'\n',encoding='utf-8')
+                args=['/usr/bin/google-maps-scraper','-input',str(query_file),'-results',str(result_file),'-depth',str(job['depth']),'-c','1','-exit-on-inactivity','3m']
+                # Email crawling is intentionally deferred: first retrieve Maps businesses reliably.
+                try:
+                    result=subprocess.run(args,capture_output=True,text=True,timeout=180,check=False)
+                    error=(result.stderr or result.stdout)[-350:]
+                    if result.returncode!=0 and not result_file.exists():
+                        raise RuntimeError('El motor terminó con error: '+error)
+                    timed_out=False
+                except subprocess.TimeoutExpired as exc:
+                    timed_out=True
+                    if not result_file.exists():
+                        diagnostic=(str(getattr(exc,'stderr',b'') or getattr(exc,'stdout',b'')))[-300:]
+                        raise RuntimeError('El scraper agotó 3 minutos sin generar CSV. '+diagnostic)
+                if not result_file.exists(): raise RuntimeError('El motor no generó resultados CSV')
+                rows=csv_rows(result_file.read_text(encoding='utf-8-sig'))
+                added=0
             for row in rows[:500]:
                 if not row.get('title'): continue
                 key=str(uuid.uuid5(uuid.NAMESPACE_URL,owner+'|'+identity(row)))
@@ -142,13 +199,19 @@ class Handler(BaseHTTPRequestHandler):
                         try: data=json.load(exc)
                         except Exception: data={"error":"Error en el motor de búsqueda"}
                         return self.send(data,exc.code)
+                source=str(body.get('source','maps'))
+                if source not in ('maps','url','paginas_amarelas'):return self.send({'error':'Fuente inválida'},400)
+                source_url=str(body.get('url','')).strip()
+                if source!='maps':
+                    try: public_url(source_url)
+                    except (ValueError,OSError) as exc:return self.send({'error':str(exc)},400)
                 query=str(body.get('query','')).strip()
-                if not 3<=len(query)<=200:return self.send({"error":"Búsqueda inválida (3–200 caracteres)"},400)
+                if source=='maps' and not 3<=len(query)<=200:return self.send({"error":"Búsqueda inválida (3–200 caracteres)"},400)
                 depth=int(body.get('depth',1))
                 if depth not in (1,3):return self.send({"error":"Profundidad máxima de prueba: 3"},400)
                 with JOB_LOCK:
                     if ACTIVE_JOBS:return self.send({"error":"Ya existe una búsqueda en curso. Intenta más tarde."},429)
-                    job={'id':str(uuid.uuid4()),'query':query,'depth':depth,'email':False,'status':'En curso','added':0,'detail':'Extrayendo datos'}
+                    job={'id':str(uuid.uuid4()),'query':query if source=='maps' else source_url,'source':source,'url':source_url,'depth':depth,'email':False,'status':'En curso','added':0,'detail':'Extrayendo datos'}
                     ACTIVE_JOBS.add(job['id'])
                 status,_=call('/rest/v1/jobs',token,'POST',{'id':job['id'],'owner_id':owner,'payload':job})
                 if status not in (200,201,204):
