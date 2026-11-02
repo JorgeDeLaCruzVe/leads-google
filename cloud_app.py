@@ -308,6 +308,15 @@ class Handler(BaseHTTPRequestHandler):
             status,me=call("/auth/v1/user",token)
             if status!=200:return self.send({"error":"Sesión no válida"},401)
             owner=me["id"]
+            if path=="/api/jobs/clear":
+                if body.get("confirm") is not True:return self.send({"error":"Confirmación requerida"},400)
+                status,records=call('/rest/v1/jobs?select=payload',token)
+                if status!=200:return self.send({"error":"No se pudo consultar el historial"},502)
+                if any(row.get('payload',{}).get('status')=='En curso' for row in records):
+                    return self.send({"error":"Espera a que finalicen las búsquedas en curso"},409)
+                status,_=call('/rest/v1/jobs?owner_id=eq.'+quote(owner),token,'DELETE')
+                if status not in (200,204):return self.send({"error":"No se pudo limpiar el historial"},502)
+                return self.send({"ok":True})
             if path=="/api/jobs":
                 if not SCRAPER_ENABLED:
                     if not scraper_ready():return self.send({"error":"El motor de extracción no está disponible"},503)
