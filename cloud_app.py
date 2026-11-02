@@ -90,7 +90,7 @@ class DirectoryParser(HTMLParser):
 def structured_directory_rows(html,base):
     """Parse schema.org JSON-LD business records when directory card markup differs."""
     rows=[]
-    for match in re.finditer(r'<script\\b[^>]*type=["\\\']application/ld\\+json["\\\'][^>]*>(.*?)</script>',html,re.I|re.S):
+    for match in re.finditer('<script[^>]*application/ld.json[^>]*>(.*?)</script>',html,re.I|re.S):
         try: root=json.loads(match.group(1))
         except (ValueError,TypeError):continue
         queue=[root]
