@@ -125,18 +125,57 @@ def public_url(value):
         if not ip.is_global:raise ValueError('La dirección no es pública')
     return value
 
+class PaiLinks(HTMLParser):
+    """Collect search listing links and ordinary next-page links from pai.pt."""
+    def __init__(self,base):
+        super().__init__();self.base=base;self.links=[];self.pages=[];self.current=None;self.parts=[]
+    def handle_starttag(self,tag,attrs):
+        if tag!='a':return
+        a=dict(attrs);href=a.get('href','')
+        if not href:return
+        absolute=urljoin(self.base,href);p=urlparse(absolute)
+        if not p.hostname or not p.hostname.endswith('.pai.pt') and p.hostname!='pai.pt':return
+        if p.path.startswith('/searches'):
+            if 'page=' in p.query or 'next' in a.get('rel',''):self.pages.append(absolute)
+            return
+        if p.path in ('/','/search','/searches'):return
+        self.current=absolute;self.parts=[]
+    def handle_data(self,data):
+        if self.current:self.parts.append(data)
+    def handle_endtag(self,tag):
+        if tag=='a' and self.current:
+            name=' '.join(' '.join(self.parts).split())
+            if len(name)>3 and not name.lower().startswith(('ver mais','website','visitar','saber mais','ver detalhes')):
+                self.links.append((name,self.current))
+            self.current=None
+
 def directory_rows(url):
     url=public_url(url)
-    req=Request(url,headers={'User-Agent':'LeadsGoogle/1.0 (directory research; contact admin)','Accept':'text/html'})
-    with urlopen(req,timeout=25) as response:
-        if urlparse(response.url).hostname!=urlparse(url).hostname:raise ValueError('Redirección a otro dominio no permitida')
-        if 'text/html' not in response.headers.get('Content-Type',''):raise ValueError('El enlace no contiene una página HTML')
-        html=response.read(2_000_001)
-    if len(html)>2_000_000:raise ValueError('Página demasiado grande')
-    content=html.decode('utf-8','replace')
-    parser=DirectoryParser();parser.base=url
-    parser.feed(content)
+    def fetch(target):
+        public_url(target)
+        req=Request(target,headers={'User-Agent':'LeadsGoogle/1.0 (public directory research)','Accept':'text/html','Accept-Language':'pt-PT,pt;q=0.9'})
+        with urlopen(req,timeout=25) as response:
+            if urlparse(response.url).hostname!=urlparse(target).hostname:raise ValueError('Redirección a otro dominio no permitida')
+            if 'text/html' not in response.headers.get('Content-Type',''):raise ValueError('El enlace no contiene una página HTML')
+            data=response.read(2_000_001)
+        if len(data)>2_000_000:raise ValueError('Página demasiado grande')
+        return data.decode('utf-8','replace')
+    content=fetch(url)
+    parser=DirectoryParser();parser.base=url;parser.feed(content)
     combined=parser.rows+structured_directory_rows(content,url)
+    # pai.pt search listings may have a different card layout. Read public detail
+    # pages linked from the search page as a fallback, with a small request budget.
+    if urlparse(url).hostname in ('www.pai.pt','pai.pt') and urlparse(url).path.startswith('/searches'):
+        links=PaiLinks(url);links.feed(content)
+        for name,link in list(dict.fromkeys(links.links))[:20]:
+            try:
+                detail=fetch(link)
+                detail_rows=structured_directory_rows(detail,link)
+                if not detail_rows:
+                    p=DirectoryParser();p.base=link;p.feed(detail);detail_rows=p.rows
+                if detail_rows:
+                    combined.extend(detail_rows)
+            except (ValueError,OSError,HTTPError):continue
     unique={}
     for row in combined:
         key=(row['title'].casefold(),row.get('address','').casefold())
