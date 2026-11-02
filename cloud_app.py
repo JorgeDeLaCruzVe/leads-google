@@ -153,6 +153,21 @@ class PaiLinks(HTMLParser):
                 self.links.append((name,self.current))
             self.current=None
 
+class PaiEmailParser(HTMLParser):
+    """Find email addresses exposed by public 'Enviar email' links/buttons."""
+    def __init__(self):
+        super().__init__();self.emails=set()
+    def handle_starttag(self,tag,attrs):
+        a=dict(attrs)
+        for key in ('href','data-email','data-mail','data-href','onclick','aria-label'):
+            value=html.unescape(a.get(key,'') or '')
+            for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}',value,re.I):
+                self.emails.add(match.lower())
+    def handle_data(self,data):
+        if '@' in data:
+            for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}',data,re.I):
+                self.emails.add(match.lower())
+
 def directory_rows(url):
     url=public_url(url)
     def fetch(target):
@@ -178,12 +193,23 @@ def directory_rows(url):
                 if not detail_rows:
                     p=DirectoryParser();p.base=link;p.feed(detail);detail_rows=p.rows
                 if detail_rows:
+                    email_parser=PaiEmailParser();email_parser.feed(detail)
+                    if email_parser.emails:
+                        for row in detail_rows:
+                            existing=set(filter(None,re.split(r'[;,\\s]+',row.get('emails',''))))
+                            row['emails']='; '.join(sorted(existing|email_parser.emails))
                     combined.extend(detail_rows)
             except (ValueError,OSError,HTTPError):continue
     unique={}
     for row in combined:
         key=(row['title'].casefold(),row.get('address','').casefold())
-        unique.setdefault(key,row)
+        if key not in unique:unique[key]=row
+        else:
+            original=unique[key]
+            for field in ('phone','website','address','emails','link'):
+                if row.get(field) and not original.get(field):original[field]=row[field]
+            if row.get('emails') and original.get('emails') and row['emails']!=original['emails']:
+                original['emails']='; '.join(sorted(set(filter(None,re.split(r'[;,\\s]+',original['emails']+';'+row['emails'])))))
     return list(unique.values())[:500]
 
 def run_scrape(job,token,owner):
