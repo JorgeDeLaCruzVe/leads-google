@@ -126,18 +126,18 @@ def run_scrape(job,token,owner):
                         raise RuntimeError('El scraper agotó 3 minutos sin generar CSV. '+diagnostic)
                 if not result_file.exists(): raise RuntimeError('El motor no generó resultados CSV')
                 rows=csv_rows(result_file.read_text(encoding='utf-8-sig'))
-                added=0
-            for row in rows[:500]:
-                if not row.get('title'): continue
-                key=str(uuid.uuid5(uuid.NAMESPACE_URL,owner+'|'+identity(row)))
-                code,old=call('/rest/v1/leads?id=eq.'+quote(key)+'&select=payload',token)
-                if code!=200: raise RuntimeError('No se pudieron consultar los contactos')
-                previous=old[0]['payload'] if old else {}
-                merged={**previous,**row,'id':key,'estado':previous.get('estado','Nuevo'),'notas':previous.get('notas','')}
-                code,_=call('/rest/v1/leads',token,'POST',{'id':key,'owner_id':owner,'payload':merged},{'Prefer':'resolution=merge-duplicates,return=minimal'})
-                if code not in (200,201,204): raise RuntimeError('No se pudieron guardar los contactos')
-                added+=not bool(old)
-            job.update(status='Parcial' if timed_out else 'Completada',added=added,detail=f'{len(rows)} resultados, {added} contactos nuevos'+(' (tiempo límite alcanzado)' if timed_out else ''))
+        added=0
+        for row in rows[:500]:
+            if not row.get('title'): continue
+            key=str(uuid.uuid5(uuid.NAMESPACE_URL,owner+'|'+identity(row)))
+            code,old=call('/rest/v1/leads?id=eq.'+quote(key)+'&select=payload',token)
+            if code!=200: raise RuntimeError('No se pudieron consultar los contactos')
+            previous=old[0]['payload'] if old else {}
+            merged={**previous,**row,'id':key,'estado':previous.get('estado','Nuevo'),'notas':previous.get('notas','')}
+            code,_=call('/rest/v1/leads',token,'POST',{'id':key,'owner_id':owner,'payload':merged},{'Prefer':'resolution=merge-duplicates,return=minimal'})
+            if code not in (200,201,204): raise RuntimeError('No se pudieron guardar los contactos')
+            added+=not bool(old)
+        job.update(status='Parcial' if timed_out else 'Completada',added=added,detail=f'{len(rows)} resultados, {added} contactos nuevos'+(' (tiempo límite alcanzado)' if timed_out else ''))
     except Exception as exc:
         job.update(status='Error',detail=str(exc)[:450])
     finally:
