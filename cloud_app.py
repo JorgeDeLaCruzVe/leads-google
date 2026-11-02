@@ -55,7 +55,7 @@ class Handler(BaseHTTPRequestHandler):
         return token if status==200 and isinstance(result,dict) and result.get("id") else None
     def do_GET(self):
         path=urlparse(self.path).path
-        if path=="/": return self.send((ROOT/"index.html").read_text(encoding="utf-8"),html=True)
+        if path=="/": return self.send((ROOT/"cloud_index.html").read_text(encoding="utf-8"),html=True)
         if path=="/api/config": return self.send({"url":URL,"key":KEY})
         if path=="/api/health": return self.send({"docker":False,"cloud":True,"scraper":False})
         token=self.user()
