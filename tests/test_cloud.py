@@ -51,7 +51,7 @@ class CloudSecurityTests(unittest.TestCase):
                 return 201,None
             raise AssertionError((path,method))
         headers={"Authorization":"Bearer test"}
-        csv_text="title,place_id,phone\\nClínica,abc,+351123\\n"
+        csv_text="title,place_id,phone\nClínica,abc,+351123\n"
         with patch.object(cloud_app,"call",side_effect=fake_call):
             self.assertEqual(self.request("/api/import",{"format":"csv","text":csv_text},headers)[1]["added"],1)
             row=next(iter(store.values()))
