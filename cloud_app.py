@@ -67,7 +67,7 @@ class DirectoryParser(HTMLParser):
         if tag=='a':
             if href.startswith('tel:'):self.card['phone']=href[4:].strip()
             elif href.startswith('mailto:'):self.card['emails']=href[7:].split('?')[0].strip()
-            elif href.startswith('http') and 'pai.pt' not in urlparse(href).hostname if urlparse(href).hostname else False:self.card['website']=href
+            elif href.startswith('http') and urlparse(href).hostname and not urlparse(href).hostname.endswith('pai.pt'):self.card['website']=href
             elif href and not href.startswith(('#','javascript:')) and not self.card['link']:self.card['link']=urljoin(getattr(self,'base',''),href)
         if tag in ('h2','h3','h4') or (tag in ('a','span','div','p') and any(w in classes for w in ('business-name','company-name','listing-title','result-title','company_title','entity-name'))):
             self.capture='title';self.parts=[]
