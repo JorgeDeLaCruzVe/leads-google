@@ -111,6 +111,9 @@ class Handler(BaseHTTPRequestHandler):
             body=json.loads(self.rfile.read(length))
             if not isinstance(body,dict):raise ValueError("JSON inválido")
             path=urlparse(self.path).path
+            status,me=call("/auth/v1/user",token)
+            if status!=200:return self.send({"error":"Sesión no válida"},401)
+            owner=me["id"]
             if path=="/api/jobs":
                 if not SCRAPER_ENABLED:return self.send({"error":"El motor de extracción no está disponible"},503)
                 query=str(body.get('query','')).strip()
