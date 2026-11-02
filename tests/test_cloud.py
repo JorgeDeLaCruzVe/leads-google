@@ -39,6 +39,12 @@ class CloudSecurityTests(unittest.TestCase):
             status,_=self.request("/api/jobs",{"query":"Lisboa"},headers={"Authorization":"Bearer token"})
         self.assertEqual(status,503)
 
+    def test_pai_search_links(self):
+        parser=cloud_app.PaiLinks('https://www.pai.pt/searches?search=query')
+        parser.feed('<a href="/empresa/exemplo">Empresa Exemplo</a><a href="/searches?page=2">2</a>')
+        self.assertEqual(parser.links[0][0],'Empresa Exemplo')
+        self.assertEqual(len(parser.pages),1)
+
     def test_directory_card_and_structured_data(self):
         markup='''<article class="search-result"><h2>Fabíola Cabelereiros &amp; Estética</h2><div class="address">Matosinhos</div><a href="tel:912014323">Ligar</a><a href="mailto:fabiola@example.pt">Email</a></article>'''
         parser=cloud_app.DirectoryParser()
