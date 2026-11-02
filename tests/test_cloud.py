@@ -39,6 +39,13 @@ class CloudSecurityTests(unittest.TestCase):
             status,_=self.request("/api/jobs",{"query":"Lisboa"},headers={"Authorization":"Bearer token"})
         self.assertEqual(status,503)
 
+    def test_actual_pai_result_card(self):
+        parser=cloud_app.DirectoryParser()
+        parser.base='https://www.pai.pt/searches'
+        parser.feed('<div class="card card--result mb-25"><h3 class="card-title"><a class="card-link" href="/paginas/234595-fogueira-santa-cabelereiros-unipessoal-lda">Fogueira Santa-Cabelereiros Unipessoal Lda</a></h3></div>')
+        self.assertEqual(len(parser.rows),1)
+        self.assertEqual(parser.rows[0]['title'],'Fogueira Santa-Cabelereiros Unipessoal Lda')
+
     def test_pai_search_links(self):
         parser=cloud_app.PaiLinks('https://www.pai.pt/searches?search=query')
         parser.feed('<a href="/empresa/exemplo">Empresa Exemplo</a><a href="/searches?page=2">2</a>')
