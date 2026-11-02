@@ -51,7 +51,7 @@ def identity(row):
 
 class DirectoryParser(HTMLParser):
     """Extract public directory cards, including pai.pt search result cards."""
-    CARD_WORDS=('business-card','listing-card','company-card','search-result','result-item','result-card','listing-item','company-item','business-item','result__item','result_entry','search_result')
+    CARD_WORDS=('business-card','listing-card','company-card','search-result','result-item','result-card','listing-item','company-item','business-item','result__item','result_entry','search_result','card--result')
     def __init__(self):
         super().__init__()
         self.rows=[];self.stack=[];self.card=None;self.card_depth=0
@@ -70,7 +70,7 @@ class DirectoryParser(HTMLParser):
             elif href.startswith('mailto:'):self.card['emails']=href[7:].split('?')[0].strip()
             elif href.startswith('http') and urlparse(href).hostname and not urlparse(href).hostname.endswith('pai.pt'):self.card['website']=href
             elif href and not href.startswith(('#','javascript:')) and not self.card['link']:self.card['link']=urljoin(getattr(self,'base',''),href)
-        if tag in ('h2','h3','h4') or (tag in ('a','span','div','p') and any(w in classes for w in ('business-name','company-name','listing-title','result-title','company_title','entity-name'))):
+        if tag in ('h2','h3','h4') or (tag in ('a','span','div','p') and any(w in classes for w in ('business-name','company-name','listing-title','result-title','company_title','entity-name','card-title','card-link'))):
             self.capture='title';self.parts=[]
         elif tag in ('address',) or any(w in classes for w in ('address','morada','location-address')):
             self.capture='address';self.parts=[]
