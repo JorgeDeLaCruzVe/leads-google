@@ -142,7 +142,7 @@ class PaiLinks(HTMLParser):
         if p.path.startswith('/searches'):
             if 'page=' in p.query or 'next' in a.get('rel',''):self.pages.append(absolute)
             return
-        if p.path in ('/','/search','/searches'):return
+        if not p.path.startswith('/paginas/'):return
         self.current=absolute;self.parts=[]
     def handle_data(self,data):
         if self.current:self.parts.append(data)
@@ -168,7 +168,7 @@ class PaiEmailParser(HTMLParser):
             for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}',data,re.I):
                 self.emails.add(match.lower())
 
-def directory_rows(url):
+def directory_rows(url,limit=20):
     url=public_url(url)
     def fetch(target):
         public_url(target)
@@ -179,35 +179,44 @@ def directory_rows(url):
             data=response.read(2_000_001)
         if len(data)>2_000_000:raise ValueError('Página demasiado grande')
         return data.decode('utf-8','replace')
-    content=fetch(url)
-    parser=DirectoryParser();parser.base=url;parser.feed(content)
-    combined=parser.rows+structured_directory_rows(content,url)
-    page_emails=PaiEmailParser();page_emails.feed(content)
-    if urlparse(url).path.startswith('/paginas/') and page_emails.emails:
-        for row in combined:row['emails']='; '.join(sorted(set(filter(None,re.split(r'[;,\\s]+',row.get('emails',''))))|page_emails.emails))
-    # pai.pt search listings may have a different card layout. Read public detail
-    # pages linked from the search page as a fallback, with a small request budget.
-    if urlparse(url).hostname in ('www.pai.pt','pai.pt') and urlparse(url).path.startswith('/searches'):
-        links=PaiLinks(url);links.feed(content)
-        for name,link in list(dict.fromkeys(links.links))[:20]:
-            try:
-                detail=fetch(link)
-                detail_rows=structured_directory_rows(detail,link)
-                if not detail_rows:
-                    p=DirectoryParser();p.base=link;p.feed(detail);detail_rows=p.rows
-                if detail_rows:
-                    email_parser=PaiEmailParser();email_parser.feed(detail)
-                    if email_parser.emails:
-                        for row in detail_rows:
-                            existing=set(filter(None,re.split(r'[;,\s]+',row.get('emails',''))))
-                            row['emails']='; '.join(sorted(existing|email_parser.emails))
-                    for existing_row in combined:
-                        if urlparse(existing_row.get('link','')).path==urlparse(link).path:
-                            for found in detail_rows:
-                                for field in ('emails','website','phone','address'):
-                                    if found.get(field) and not existing_row.get(field):existing_row[field]=found[field]
+    combined=[]
+    visited_pages=set()
+    pending=[url]
+    visited_details=set()
+    max_pages=min(60,max(1,(limit+9)//10+3))
+    while pending and len(visited_pages)<max_pages and len(visited_details)<limit:
+        page=pending.pop(0)
+        if page in visited_pages:continue
+        visited_pages.add(page)
+        try:content=fetch(page)
+        except (ValueError,OSError,HTTPError):
+            if page==url:raise
+            continue
+        parser=DirectoryParser();parser.base=page;parser.feed(content)
+        combined.extend(parser.rows+structured_directory_rows(content,page))
+        if urlparse(page).hostname in ('www.pai.pt','pai.pt') and urlparse(page).path.startswith('/searches'):
+            links=PaiLinks(page);links.feed(content)
+            for next_page in links.pages:
+                if next_page not in visited_pages and next_page not in pending:pending.append(next_page)
+            for name,link in dict.fromkeys(links.links):
+                if len(visited_details)>=limit:break
+                if link in visited_details:continue
+                visited_details.add(link)
+                try:
+                    detail=fetch(link)
+                    detail_rows=structured_directory_rows(detail,link)
+                    if not detail_rows:
+                        p=DirectoryParser();p.base=link;p.feed(detail);detail_rows=p.rows
+                    emails=PaiEmailParser();emails.feed(detail)
+                    if not detail_rows:detail_rows=[{'title':name,'link':link,'source':'Páginas Amarelas'}]
+                    for row in detail_rows:
+                        if emails.emails:row['emails']='; '.join(sorted(emails.emails))
                     combined.extend(detail_rows)
-            except (ValueError,OSError,HTTPError):continue
+                except (ValueError,OSError,HTTPError):continue
+        elif urlparse(page).path.startswith('/paginas/'):
+            emails=PaiEmailParser();emails.feed(content)
+            for row in combined:
+                if emails.emails:row['emails']='; '.join(sorted(emails.emails))
     unique={}
     for row in combined:
         key=(row['title'].casefold(),row.get('address','').casefold())
@@ -218,12 +227,12 @@ def directory_rows(url):
                 if row.get(field) and not original.get(field):original[field]=row[field]
             if row.get('emails') and original.get('emails') and row['emails']!=original['emails']:
                 original['emails']='; '.join(sorted(set(filter(None,re.split(r'[;,\s]+',original['emails']+';'+row['emails'])))))
-    return list(unique.values())[:500]
+    return list(unique.values())[:limit]
 
 def run_scrape(job,token,owner):
     try:
         if job.get('source') in ('url','paginas_amarelas'):
-            rows=directory_rows(job['url'])
+            rows=directory_rows(job['url'],job.get('limit',20))
             timed_out=False
             if not rows:raise RuntimeError('La página se cargó, pero no se reconocieron fichas de empresas. Es posible que pai.pt utilice una estructura HTML diferente o que el acceso automático esté limitado.')
         else:
