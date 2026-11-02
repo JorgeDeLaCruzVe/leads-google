@@ -39,6 +39,18 @@ class CloudSecurityTests(unittest.TestCase):
             status,_=self.request("/api/jobs",{"query":"Lisboa"},headers={"Authorization":"Bearer token"})
         self.assertEqual(status,503)
 
+    def test_directory_card_and_structured_data(self):
+        markup='''<article class="search-result"><h2>Fabíola Cabelereiros &amp; Estética</h2><div class="address">Matosinhos</div><a href="tel:912014323">Ligar</a><a href="mailto:fabiola@example.pt">Email</a></article>'''
+        parser=cloud_app.DirectoryParser()
+        parser.base="https://www.pai.pt/searches"
+        parser.feed(markup)
+        self.assertEqual(len(parser.rows),1)
+        self.assertEqual(parser.rows[0]['phone'],'912014323')
+        self.assertEqual(parser.rows[0]['emails'],'fabiola@example.pt')
+        structured='''<script type="application/ld+json">{"@type":"LocalBusiness","name":"Salão Teste","telephone":"912000000","address":{"addressLocality":"Porto"}}</script>'''
+        rows=cloud_app.structured_directory_rows(structured,"https://www.pai.pt/searches")
+        self.assertEqual(rows[0]['title'],"Salão Teste")
+
     def test_import_deduplication_and_notes(self):
         store={}
         def fake_call(path,token,method="GET",payload=None,extra=None):
