@@ -317,6 +317,11 @@ class Handler(BaseHTTPRequestHandler):
             status,me=call("/auth/v1/user",token)
             if status!=200:return self.send({"error":"Sesión no válida"},401)
             owner=me["id"]
+            if path=="/api/leads/clear":
+                if body.get('confirm') is not True:return self.send({'error':'Confirmación requerida'},400)
+                status,_=call('/rest/v1/leads?owner_id=eq.'+quote(owner),token,'DELETE')
+                if status not in (200,204):return self.send({'error':'No se pudieron eliminar los resultados'},502)
+                return self.send({'ok':True})
             if path=="/api/jobs/delete":
                 job_id=str(body.get('id',''))
                 try:uuid.UUID(job_id)
