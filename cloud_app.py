@@ -45,7 +45,7 @@ def run_scrape(job,token,owner):
         with tempfile.TemporaryDirectory(prefix='leads-scrape-') as folder:
             query_file=Path(folder)/'queries.txt'
             result_file=Path(folder)/'results.csv'
-            query_file.write_text(job['query']+'\\n',encoding='utf-8')
+            query_file.write_text(job['query']+'\n',encoding='utf-8')
             args=['/usr/bin/google-maps-scraper','-input',str(query_file),'-results',str(result_file),'-depth',str(job['depth']),'-c','1','-exit-on-inactivity','3m']
             if job['email']: args.append('-email')
             result=subprocess.run(args,capture_output=True,text=True,timeout=540,check=False)
