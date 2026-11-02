@@ -50,31 +50,68 @@ def identity(row):
     return str(uuid.uuid5(uuid.NAMESPACE_URL,str(value)))
 
 class DirectoryParser(HTMLParser):
+    """Extract public directory cards, including pai.pt search result cards."""
+    CARD_WORDS=('business-card','listing-card','company-card','search-result','result-item','result-card','listing-item','company-item','business-item','result__item','result_entry','search_result')
     def __init__(self):
         super().__init__()
-        self.rows=[]
-        self.current=None
-        self.in_name=False
-        self.name_parts=[]
+        self.rows=[];self.stack=[];self.card=None;self.card_depth=0
+        self.capture=None;self.parts=[];self.link=''
     def handle_starttag(self,tag,attrs):
-        a=dict(attrs)
-        if tag in ('article','li','div') and any(word in str(a.get('class','')).lower() for word in ('business-card','listing-card','company-card')):
-            self.current={'title':'','phone':'','website':'','address':''}
-        if self.current is not None:
-            if tag in ('h2','h3'):self.in_name=True;self.name_parts=[]
-            if tag=='a':
-                href=a.get('href','')
-                if href.startswith('tel:'):self.current['phone']=href[4:]
-                elif href.startswith('http'):self.current['website']=href
+        a=dict(attrs);classes=' '.join((a.get('class',''),a.get('id',''))).lower()
+        self.stack.append(tag)
+        if self.card is None and tag in ('article','li','div','section') and any(w in classes for w in self.CARD_WORDS):
+            self.card={'title':'','phone':'','website':'','address':'','emails':'','link':'','source':'Páginas Amarelas' if 'pai.pt' in getattr(self,'base','') else 'URL personalizada'}
+            self.card_depth=len(self.stack)
+        if self.card is None:return
+        href=a.get('href','')
+        if tag=='a':
+            if href.startswith('tel:'):self.card['phone']=href[4:].strip()
+            elif href.startswith('mailto:'):self.card['emails']=href[7:].split('?')[0].strip()
+            elif href.startswith('http') and 'pai.pt' not in urlparse(href).hostname if urlparse(href).hostname else False:self.card['website']=href
+            elif href and not href.startswith(('#','javascript:')) and not self.card['link']:self.card['link']=urljoin(getattr(self,'base',''),href)
+        if tag in ('h2','h3','h4') or (tag in ('a','span','div','p') and any(w in classes for w in ('business-name','company-name','listing-title','result-title','company_title','entity-name'))):
+            self.capture='title';self.parts=[]
+        elif tag in ('address',) or any(w in classes for w in ('address','morada','location-address')):
+            self.capture='address';self.parts=[]
     def handle_data(self,data):
-        if self.in_name:self.name_parts.append(data)
+        if self.card is not None and self.capture:self.parts.append(data)
     def handle_endtag(self,tag):
-        if tag in ('h2','h3') and self.in_name:
-            if self.current is not None:self.current['title']=' '.join(self.name_parts).strip()
-            self.in_name=False
-        if tag in ('article','li') and self.current is not None:
-            if self.current['title']:self.rows.append(self.current)
-            self.current=None
+        if self.card is not None:
+            if self.capture and (tag in ('h2','h3','h4','address','a','span','p','div')):
+                value=' '.join(' '.join(self.parts).split())
+                if value and (self.capture!='title' or not self.card['title']):self.card[self.capture]=value
+                self.capture=None;self.parts=[]
+            if len(self.stack)==self.card_depth:
+                if self.card['title'] and (self.card['link'] or self.card['phone'] or self.card['address'] or self.card['website'] or self.card['emails']):
+                    self.rows.append(self.card)
+                self.card=None;self.capture=None
+        if self.stack:self.stack.pop()
+
+def structured_directory_rows(html,base):
+    """Parse schema.org JSON-LD business records when directory card markup differs."""
+    rows=[]
+    for match in re.finditer(r'<script\\b[^>]*type=["\\\']application/ld\\+json["\\\'][^>]*>(.*?)</script>',html,re.I|re.S):
+        try: root=json.loads(match.group(1))
+        except (ValueError,TypeError):continue
+        queue=[root]
+        while queue:
+            item=queue.pop()
+            if isinstance(item,list):queue.extend(item);continue
+            if not isinstance(item,dict):continue
+            for k in ('@graph','itemListElement','item'):
+                if k in item:queue.append(item[k])
+            kind=item.get('@type',[])
+            kinds=[kind] if isinstance(kind,str) else kind if isinstance(kind,list) else []
+            if not any(t in ('LocalBusiness','Organization','Store','HairSalon','BeautySalon','ProfessionalService','Restaurant','AutoRepair','MedicalBusiness') or str(t).endswith('Business') for t in kinds):continue
+            name=item.get('name')
+            if not isinstance(name,str) or not name.strip():continue
+            address=item.get('address','')
+            if isinstance(address,dict):address=', '.join(str(address.get(k,'')) for k in ('streetAddress','postalCode','addressLocality') if address.get(k))
+            if not isinstance(address,str):address=''
+            phone=item.get('telephone','');website=item.get('url','')
+            if not any((phone,website,address)):continue
+            rows.append({'title':name.strip(),'phone':str(phone or ''),'website':str(website or ''),'address':address,'emails':str(item.get('email','') or ''),'link':str(item.get('@id',base) or base),'source':'Páginas Amarelas' if 'pai.pt' in base else 'URL personalizada'})
+    return rows
 
 def public_url(value):
     parsed=urlparse(value)
@@ -96,9 +133,15 @@ def directory_rows(url):
         if 'text/html' not in response.headers.get('Content-Type',''):raise ValueError('El enlace no contiene una página HTML')
         html=response.read(2_000_001)
     if len(html)>2_000_000:raise ValueError('Página demasiado grande')
-    parser=DirectoryParser()
-    parser.feed(html.decode('utf-8','replace'))
-    return parser.rows[:500]
+    content=html.decode('utf-8','replace')
+    parser=DirectoryParser();parser.base=url
+    parser.feed(content)
+    combined=parser.rows+structured_directory_rows(content,url)
+    unique={}
+    for row in combined:
+        key=(row['title'].casefold(),row.get('address','').casefold())
+        unique.setdefault(key,row)
+    return list(unique.values())[:500]
 
 def run_scrape(job,token,owner):
     try:
