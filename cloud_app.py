@@ -1,5 +1,5 @@
 """Private cloud API for Leads Google. Uses user-scoped Supabase REST; no service-role key."""
-import json, html, os, uuid, csv, io, threading, subprocess, tempfile, socket, ipaddress, re
+import json, html, os, uuid, csv, io, threading, subprocess, tempfile, socket, ipaddress, re, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -321,6 +321,19 @@ class Handler(BaseHTTPRequestHandler):
         if path=="/api/health": return self.send({"docker":SCRAPER_ENABLED,"cloud":True,"scraper":scraper_ready()})
         token=self.user()
         if not token: return self.send({"error":"Sesión no válida"},401)
+        if path=="/api/engine/reconnect":
+            if SCRAPER_ENABLED:return self.send({"connected":True,"message":"Motor local activo"})
+            if not SCRAPER_BACKEND_URL:return self.send({"connected":False,"message":"No hay un servidor extractor configurado"},503)
+            for attempt in range(3):
+                try:
+                    request=Request(SCRAPER_BACKEND_URL+'/api/health',headers={'Cache-Control':'no-cache','User-Agent':'LeadsGoogle-EngineReconnect/1.0'})
+                    with urlopen(request,timeout=20) as response:
+                        if json.load(response).get('scraper'):
+                            return self.send({"connected":True,"message":"Motor conectado correctamente","attempts":attempt+1})
+                except Exception:
+                    pass
+                if attempt<2:time.sleep(3)
+            return self.send({"connected":False,"message":"El servidor extractor no respondió tras 3 intentos. Revisa el servicio en Render.","attempts":3},503)
         if path in ("/api/leads","/api/jobs"):
             table=path.rsplit("/",1)[-1]
             status,rows=call("/rest/v1/"+table+"?select=payload&order=created_at.desc",token)
