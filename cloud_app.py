@@ -214,10 +214,14 @@ def directory_rows(url,limit=20):
             # Fallback for PAI search URLs that use a page query but omit next-page anchors.
             if not links.pages and len(visited_details)<limit:
                 parsed=urlparse(page)
-                params=dict(parse_qsl(parsed.query,keep_blank_values=True))
-                current=params.get('page','1')
+                # Keep repeated PAI filters (search[categories][], search[tags][], etc.).
+                # Converting query pairs to dict silently removes all but the last value.
+                params=parse_qsl(parsed.query,keep_blank_values=True)
+                page_key=next((k for k,v in params if k=='page' or k=='search[page]'),'page')
+                current=next((v for k,v in params if k==page_key),'1')
                 if current.isdigit():
-                    params['page']=str(int(current)+1)
+                    params=[(k,v) for k,v in params if k!=page_key]
+                    params.append((page_key,str(int(current)+1)))
                     next_url=urlunparse(parsed._replace(query=urlencode(params)))
                     if next_url not in visited_pages and next_url not in pending:pending.append(next_url)
             for name,link in dict.fromkeys(links.links):
