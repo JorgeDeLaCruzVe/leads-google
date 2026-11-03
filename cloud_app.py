@@ -252,11 +252,14 @@ def run_scrape(job,token,owner):
             # This is best-effort: source coverage and free runtime cannot guarantee a count.
             requested=job.get('limit',20)
             base=job['query']
-            variants=[base,base+' centro',base+' arredores',base+' zona norte',base+' zona sul',base+' zona este',base+' zona oeste',base+' proximidades']
+            variants=[base]+[base+' '+area for area in ('centro','arredores','zona norte','zona sul','zona este','zona oeste','proximidades','bairros','zona industrial','zona comercial','área metropolitana','distrito','concelho','região')]
+            # Report progress while additional search passes are being attempted.
             rows=[];seen=set();timed_out=False
             with tempfile.TemporaryDirectory(prefix='leads-scrape-') as folder:
-                for attempt,query in enumerate(variants[:min(len(variants),max(2,(requested+19)//20+1))]):
+                for attempt,query in enumerate(variants[:min(len(variants),max(3,(requested+14)//15+1))]):
                     if len(rows)>=requested:break
+                    job['detail']=f'{len(rows)} de {requested} encontrados · búsqueda {attempt+1} de {min(len(variants),max(3,(requested+14)//15+1))}'
+                    call('/rest/v1/jobs?id=eq.'+quote(job['id']),token,'PATCH',{'payload':job})
                     query_file=Path(folder)/('queries_'+str(attempt)+'.txt')
                     result_file=Path(folder)/('results_'+str(attempt)+'.csv')
                     query_file.write_text(query+'\n',encoding='utf-8')
