@@ -86,6 +86,31 @@ async function health(){
   retry.textContent='↻ Reconectar motor';
  }
 }
-$('#retryEngine').onclick=()=>health();
+$('#retryEngine').onclick=async()=>{
+ if(checkingEngine)return;
+ checkingEngine=true;
+ const retry=$('#retryEngine');
+ retry.disabled=true;
+ retry.textContent='↻ Reconectando…';
+ $('#engine').textContent='◌ Despertando servidor extractor (hasta 70 s)…';
+ try{
+  const response=await api('/api/engine/reconnect');
+  if(response.connected){
+   $('#engine').textContent='● Extracción disponible';
+   $('#searchButton').disabled=false;
+   toast('Motor reconectado. Ya puedes buscar negocios.');
+  }else{
+   $('#engine').textContent='◌ Motor sin respuesta';
+   toast(response.message||'El motor no respondió.');
+  }
+ }catch(err){
+  $('#engine').textContent='◌ No se pudo reconectar';
+  toast(err.message||'Comprueba el servidor extractor en Render.');
+ }finally{
+  checkingEngine=false;
+  retry.disabled=false;
+  retry.textContent='↻ Reconectar motor';
+ }
+};
 setInterval(()=>{if(cloudToken)refresh().catch(()=>{})},6000);setInterval(()=>{if(cloudToken)health().catch(()=>{})},30000);
 </script></html>
