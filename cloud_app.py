@@ -191,13 +191,16 @@ def directory_rows(url,limit=20):
     visited_pages=set()
     visited_details=set()
     seen_signatures=set()
+    repeated_pages=0
+    failed_pages=0
     parsed_url=urlparse(url)
     is_pai_search=parsed_url.hostname in ('pai.pt','www.pai.pt') and parsed_url.path.startswith('/searches')
     if is_pai_search:
         # PAI uses &page=N. Preserve every search filter, including repeated [] values.
         base_params=[(k,v) for k,v in parse_qsl(parsed_url.query,keep_blank_values=True) if k!='page']
         original_page=next((int(v) for k,v in parse_qsl(parsed_url.query) if k=='page' and v.isdigit()),1)
-        max_pages=min(100,max(3,(limit+9)//10+5))
+        # Scan all available numbered pages until the unique-business target is reached.
+        max_pages=100
         pages=[urlunparse(parsed_url._replace(query=urlencode(base_params+([('page',str(n))] if n>1 else [])))) for n in range(original_page,original_page+max_pages)]
     else:
         pages=[url]
@@ -207,7 +210,10 @@ def directory_rows(url,limit=20):
         try:content=fetch(page)
         except (ValueError,OSError,HTTPError):
             if page==url:raise
+            failed_pages+=1
+            if failed_pages>=5:break
             continue
+        failed_pages=0
         parser=DirectoryParser();parser.base=page;parser.feed(content)
         if not is_pai_search:
             combined.extend(parser.rows+structured_directory_rows(content,page))
@@ -215,11 +221,16 @@ def directory_rows(url,limit=20):
         links=PaiLinks(page);links.feed(content)
         signature=tuple(sorted(set(link for _,link in links.links)))
         if signature and signature in seen_signatures:
-            # Stop when the directory repeats the same page, e.g. past its final page.
-            break
+            repeated_pages+=1
+            # A single repeated page must not terminate a large extraction.
+            if repeated_pages>=5:break
+            continue
+        repeated_pages=0
         if signature:seen_signatures.add(signature)
         if not links.links:
-            break
+            repeated_pages+=1
+            if repeated_pages>=5:break
+            continue
         for name,link in dict.fromkeys(links.links):
             if link in visited_details:continue
             visited_details.add(link)
