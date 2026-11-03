@@ -176,6 +176,43 @@ class PaiEmailParser(HTMLParser):
             for match in re.findall(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}',data,re.I):
                 self.emails.add(match.lower())
 
+class PaiWebsiteParser(HTMLParser):
+    """Capture the external company website from a PAI detail page."""
+    def __init__(self,base):
+        super().__init__();self.base=base;self.candidates=[];self.active=None;self.parts=[]
+    def handle_starttag(self,tag,attrs):
+        if tag!='a':return
+        a=dict(attrs)
+        href=html.unescape(a.get('href','') or a.get('data-href','') or '').strip()
+        if not href:return
+        absolute=urljoin(self.base,href)
+        parsed=urlparse(absolute)
+        if parsed.scheme not in ('http','https') or not parsed.hostname:return
+        host=parsed.hostname.lower()
+        if host=='pai.pt' or host.endswith('.pai.pt'):return
+        label=' '.join(str(a.get(k,'') or '') for k in ('title','aria-label','class')).lower()
+        self.active=absolute;self.parts=[label]
+    def handle_data(self,data):
+        if self.active:self.parts.append(data)
+    def handle_endtag(self,tag):
+        if tag=='a' and self.active:
+            label=' '.join(self.parts).lower()
+            score=2 if any(word in label for word in ('visitar website','visitar site','website','site oficial','página web')) else 0
+            if score:self.candidates.append((score,self.active))
+            self.active=None;self.parts=[]
+    def website(self):
+        return sorted(self.candidates,reverse=True)[0][1] if self.candidates else ''
+
+def external_company_website(value):
+    if not isinstance(value,str):return ''
+    value=value.strip()
+    parsed=urlparse(value)
+    if parsed.scheme not in ('http','https') or not parsed.hostname:return ''
+    host=parsed.hostname.lower()
+    if host=='pai.pt' or host.endswith('.pai.pt'):return ''
+    return value
+
+
 def directory_rows(url,limit=20):
     url=public_url(url)
     def fetch(target):
@@ -244,10 +281,13 @@ def directory_rows(url,limit=20):
                 if detail_rows:
                     best=next((item for item in detail_rows if item.get('title','').casefold()==name.casefold()),detail_rows[0])
                     row.update({k:v for k,v in best.items() if v})
+                websites=PaiWebsiteParser(link);websites.feed(detail)
+                row['website']=websites.website() or external_company_website(row.get('website',''))
                 emails=PaiEmailParser();emails.feed(detail)
                 if emails.emails:row['emails']='; '.join(sorted(emails.emails))
             except (ValueError,OSError,HTTPError):
                 pass
+            row['website']=external_company_website(row.get('website',''))
             combined.append(row)
             if len(visited_details)>=limit:break
         if len(visited_details)>=limit:break
