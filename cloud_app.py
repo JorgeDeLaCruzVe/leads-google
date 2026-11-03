@@ -130,24 +130,26 @@ def public_url(value):
     return value
 
 class PaiLinks(HTMLParser):
-    """Collect PAI business cards and pagination links, including rel=next."""
+    """Collect PAI business links and real pagination controls."""
     def __init__(self,base):
-        super().__init__()
-        self.base=base;self.links=[];self.pages=[];self.current=None;self.parts=[]
+        super().__init__();self.base=base;self.links=[];self.pages=[];self.current=None;self.parts=[];self.page_number=0
     def handle_starttag(self,tag,attrs):
-        if tag!='a':return
-        a=dict(attrs);href=a.get('href','')
+        a=dict(attrs)
+        if tag not in ('a','link','button'):return
+        href=a.get('href','') or a.get('data-href','') or a.get('data-url','')
+        rel=a.get('rel','')
+        if isinstance(rel,list):rel=' '.join(rel)
+        label=' '.join(str(a.get(k,'') or '') for k in ('aria-label','title','class','data-page')).lower()
+        if tag=='button' and a.get('data-page','').isdigit():
+            self.page_number=max(self.page_number,int(a['data-page']))
         if not href:return
         absolute=urljoin(self.base,href);p=urlparse(absolute)
-        if p.hostname not in ('pai.pt','www.pai.pt'):return
-        rel=a.get('rel','') or ''
-        if isinstance(rel,(list,tuple)):rel=' '.join(rel)
+        if p.hostname not in ('www.pai.pt','pai.pt'):return
         if p.path.startswith('/searches'):
-            query=dict(parse_qsl(p.query,keep_blank_values=True))
-            if 'next' in rel.lower() or any('page' in k.lower() for k in query) or 'pagination' in (a.get('class','') or '').lower():
+            if 'page=' in p.query or 'offset=' in p.query or 'next' in rel or any(x in label for x in ('next','seguinte','próxima','pagination','paginacao')):
                 self.pages.append(absolute)
             return
-        if not p.path.startswith('/paginas/'):return
+        if tag!='a' or not p.path.startswith('/paginas/'):return
         self.current=absolute;self.parts=[]
     def handle_data(self,data):
         if self.current:self.parts.append(data)
@@ -203,21 +205,21 @@ def directory_rows(url,limit=20):
         combined.extend(parser.rows+structured_directory_rows(content,page))
         if urlparse(page).hostname in ('www.pai.pt','pai.pt') and urlparse(page).path.startswith('/searches'):
             links=PaiLinks(page);links.feed(content)
-            signature=tuple(sorted(link for _,link in links.links))
-            if signature and signature in page_signatures:continue
+            signature=tuple(sorted(set(link for _,link in links.links)))
+            # Repeated listings mean that the directory ignored the guessed page number.
+            if signature and signature in page_signatures:break
             if signature:page_signatures.add(signature)
-            # Some PAI layouts omit ordinary next-page anchors. Try the site's page query parameter.
-            if len(visited_details)<limit and not links.pages:
-                parsed=urlparse(page)
-                params=dict(parse_qsl(parsed.query,keep_blank_values=True))
-                current_page=next((v for k,v in params.items() if k.lower()=='page' or k.lower().endswith('[page]')),'1')
-                number=int(current_page) if current_page.isdigit() else 1
-                page_key=next((k for k in params if k.lower().endswith('[page]') or k.lower()=='page'),'page')
-                params[page_key]=str(number+1)
-                next_url=urlunparse(parsed._replace(query=urlencode(params)))
-                if next_url not in visited_pages and next_url not in pending:pending.append(next_url)
             for next_page in links.pages:
                 if next_page not in visited_pages and next_page not in pending:pending.append(next_page)
+            # Fallback for PAI search URLs that use a page query but omit next-page anchors.
+            if not links.pages and len(visited_details)<limit:
+                parsed=urlparse(page)
+                params=dict(parse_qsl(parsed.query,keep_blank_values=True))
+                current=params.get('page','1')
+                if current.isdigit():
+                    params['page']=str(int(current)+1)
+                    next_url=urlunparse(parsed._replace(query=urlencode(params)))
+                    if next_url not in visited_pages and next_url not in pending:pending.append(next_url)
             for name,link in dict.fromkeys(links.links):
                 if len(visited_details)>=limit:break
                 if link in visited_details:continue
