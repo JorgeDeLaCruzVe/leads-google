@@ -189,12 +189,19 @@ def directory_rows(url,limit=20):
         return data.decode('utf-8','replace')
     combined=[]
     visited_pages=set()
-    pending=[url]
     visited_details=set()
-    page_signatures=set()
-    max_pages=min(60,max(1,(limit+9)//10+3))
-    while pending and len(visited_pages)<max_pages and len(visited_details)<limit:
-        page=pending.pop(0)
+    seen_signatures=set()
+    parsed_url=urlparse(url)
+    is_pai_search=parsed_url.hostname in ('pai.pt','www.pai.pt') and parsed_url.path.startswith('/searches')
+    if is_pai_search:
+        # PAI uses &page=N. Preserve every search filter, including repeated [] values.
+        base_params=[(k,v) for k,v in parse_qsl(parsed_url.query,keep_blank_values=True) if k!='page']
+        original_page=next((int(v) for k,v in parse_qsl(parsed_url.query) if k=='page' and v.isdigit()),1)
+        max_pages=min(100,max(3,(limit+9)//10+5))
+        pages=[urlunparse(parsed_url._replace(query=urlencode(base_params+([('page',str(n))] if n>1 else [])))) for n in range(original_page,original_page+max_pages)]
+    else:
+        pages=[url]
+    for page in pages:
         if page in visited_pages:continue
         visited_pages.add(page)
         try:content=fetch(page)
@@ -202,47 +209,37 @@ def directory_rows(url,limit=20):
             if page==url:raise
             continue
         parser=DirectoryParser();parser.base=page;parser.feed(content)
-        combined.extend(parser.rows+structured_directory_rows(content,page))
-        if urlparse(page).hostname in ('www.pai.pt','pai.pt') and urlparse(page).path.startswith('/searches'):
-            links=PaiLinks(page);links.feed(content)
-            signature=tuple(sorted(set(link for _,link in links.links)))
-            # Repeated listings mean that the directory ignored the guessed page number.
-            if signature and signature in page_signatures:break
-            if signature:page_signatures.add(signature)
-            for next_page in links.pages:
-                if next_page not in visited_pages and next_page not in pending:pending.append(next_page)
-            # Fallback for PAI search URLs that use a page query but omit next-page anchors.
-            if not links.pages and len(visited_details)<limit:
-                parsed=urlparse(page)
-                # Keep repeated PAI filters (search[categories][], search[tags][], etc.).
-                # Converting query pairs to dict silently removes all but the last value.
-                params=parse_qsl(parsed.query,keep_blank_values=True)
-                page_key=next((k for k,v in params if k=='page' or k=='search[page]'),'page')
-                current=next((v for k,v in params if k==page_key),'1')
-                if current.isdigit():
-                    params=[(k,v) for k,v in params if k!=page_key]
-                    params.append((page_key,str(int(current)+1)))
-                    next_url=urlunparse(parsed._replace(query=urlencode(params)))
-                    if next_url not in visited_pages and next_url not in pending:pending.append(next_url)
-            for name,link in dict.fromkeys(links.links):
-                if len(visited_details)>=limit:break
-                if link in visited_details:continue
-                visited_details.add(link)
-                try:
-                    detail=fetch(link)
-                    detail_rows=structured_directory_rows(detail,link)
-                    if not detail_rows:
-                        p=DirectoryParser();p.base=link;p.feed(detail);detail_rows=p.rows
-                    emails=PaiEmailParser();emails.feed(detail)
-                    if not detail_rows:detail_rows=[{'title':name,'link':link,'source':'Páginas Amarelas'}]
-                    for row in detail_rows:
-                        if emails.emails:row['emails']='; '.join(sorted(emails.emails))
-                    combined.extend(detail_rows)
-                except (ValueError,OSError,HTTPError):continue
-        elif urlparse(page).path.startswith('/paginas/'):
-            emails=PaiEmailParser();emails.feed(content)
-            for row in combined:
+        if not is_pai_search:
+            combined.extend(parser.rows+structured_directory_rows(content,page))
+            continue
+        links=PaiLinks(page);links.feed(content)
+        signature=tuple(sorted(set(link for _,link in links.links)))
+        if signature and signature in seen_signatures:
+            # Stop when the directory repeats the same page, e.g. past its final page.
+            break
+        if signature:seen_signatures.add(signature)
+        if not links.links:
+            break
+        for name,link in dict.fromkeys(links.links):
+            if link in visited_details:continue
+            visited_details.add(link)
+            # The listing itself provides the business identity; details enrich it.
+            row={'title':name,'link':link,'source':'Páginas Amarelas'}
+            try:
+                detail=fetch(link)
+                detail_rows=structured_directory_rows(detail,link)
+                if not detail_rows:
+                    p=DirectoryParser();p.base=link;p.feed(detail);detail_rows=p.rows
+                if detail_rows:
+                    best=next((item for item in detail_rows if item.get('title','').casefold()==name.casefold()),detail_rows[0])
+                    row.update({k:v for k,v in best.items() if v})
+                emails=PaiEmailParser();emails.feed(detail)
                 if emails.emails:row['emails']='; '.join(sorted(emails.emails))
+            except (ValueError,OSError,HTTPError):
+                pass
+            combined.append(row)
+            if len(visited_details)>=limit:break
+        if len(visited_details)>=limit:break
     unique={}
     for row in combined:
         key=(row['title'].casefold(),row.get('address','').casefold())
