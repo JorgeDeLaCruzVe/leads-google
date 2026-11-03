@@ -248,25 +248,35 @@ def run_scrape(job,token,owner):
             timed_out=False
             if not rows:raise RuntimeError('La página se cargó, pero no se reconocieron fichas de empresas. Es posible que pai.pt utilice una estructura HTML diferente o que el acceso automático esté limitado.')
         else:
+            # Repeat Maps searches with distinct geographical phrasings to seek the requested target.
+            # This is best-effort: source coverage and free runtime cannot guarantee a count.
+            requested=job.get('limit',20)
+            base=job['query']
+            variants=[base,base+' centro',base+' arredores',base+' zona norte',base+' zona sul',base+' zona este',base+' zona oeste',base+' proximidades']
+            rows=[];seen=set();timed_out=False
             with tempfile.TemporaryDirectory(prefix='leads-scrape-') as folder:
-                query_file=Path(folder)/'queries.txt'
-                result_file=Path(folder)/'results.csv'
-                query_file.write_text(job['query']+'\n',encoding='utf-8')
-                args=['/usr/bin/google-maps-scraper','-input',str(query_file),'-results',str(result_file),'-depth',str(job['depth']),'-c','1','-exit-on-inactivity','3m']
-                # Email crawling is intentionally deferred: first retrieve Maps businesses reliably.
-                try:
-                    result=subprocess.run(args,capture_output=True,text=True,timeout=180,check=False)
-                    error=(result.stderr or result.stdout)[-350:]
-                    if result.returncode!=0 and not result_file.exists():
-                        raise RuntimeError('El motor terminó con error: '+error)
-                    timed_out=False
-                except subprocess.TimeoutExpired as exc:
-                    timed_out=True
-                    if not result_file.exists():
-                        diagnostic=(str(getattr(exc,'stderr',b'') or getattr(exc,'stdout',b'')))[-300:]
-                        raise RuntimeError('El scraper agotó 3 minutos sin generar CSV. '+diagnostic)
-                if not result_file.exists(): raise RuntimeError('El motor no generó resultados CSV')
-                rows=csv_rows(result_file.read_text(encoding='utf-8-sig'))
+                for attempt,query in enumerate(variants[:min(len(variants),max(2,(requested+19)//20+1))]):
+                    if len(rows)>=requested:break
+                    query_file=Path(folder)/('queries_'+str(attempt)+'.txt')
+                    result_file=Path(folder)/('results_'+str(attempt)+'.csv')
+                    query_file.write_text(query+'\n',encoding='utf-8')
+                    args=['/usr/bin/google-maps-scraper','-input',str(query_file),'-results',str(result_file),'-depth',str(job['depth']),'-c','1','-exit-on-inactivity','3m']
+                    try:
+                        result=subprocess.run(args,capture_output=True,text=True,timeout=150,check=False)
+                        if result.returncode!=0 and not result_file.exists():
+                            if attempt==0:raise RuntimeError('El motor terminó con error: '+(result.stderr or result.stdout)[-300:])
+                            continue
+                    except subprocess.TimeoutExpired:
+                        timed_out=True
+                        if not result_file.exists():continue
+                    if result_file.exists():
+                        for item in csv_rows(result_file.read_text(encoding='utf-8-sig')):
+                            if not item.get('title'):continue
+                            key=identity(item)
+                            if key not in seen:
+                                seen.add(key);rows.append(item)
+                            if len(rows)>=requested:break
+            if not rows:raise RuntimeError('El motor no devolvió negocios para la búsqueda')
         added=0
         for row in rows[:job.get('limit',20)]:
             if not row.get('title'): continue
@@ -278,7 +288,7 @@ def run_scrape(job,token,owner):
             code,_=call('/rest/v1/leads',token,'POST',{'id':key,'owner_id':owner,'payload':merged},{'Prefer':'resolution=merge-duplicates,return=minimal'})
             if code not in (200,201,204): raise RuntimeError('No se pudieron guardar los contactos')
             added+=not bool(old)
-        job.update(status='Parcial' if timed_out else 'Completada',added=added,detail=f'{len(rows)} resultados, {added} contactos nuevos'+(' (tiempo límite alcanzado)' if timed_out else ''))
+        job.update(status='Parcial' if timed_out or len(rows)<job.get('limit',20) else 'Completada',added=added,detail=f'{len(rows)} de {job.get("limit",20)} solicitados, {added} contactos nuevos'+(' (tiempo límite alcanzado)' if timed_out else '; la fuente no ofreció más resultados' if len(rows)<job.get('limit',20) else ''))
     except Exception as exc:
         job.update(status='Error',detail=str(exc)[:450])
     finally:
