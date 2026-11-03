@@ -19,7 +19,7 @@ def scraper_ready():
     if SCRAPER_ENABLED:return True
     if not SCRAPER_BACKEND_URL:return False
     try:
-        with urlopen(SCRAPER_BACKEND_URL+'/api/health',timeout=5) as response:
+        with urlopen(SCRAPER_BACKEND_URL+'/api/health',timeout=25) as response:
             return bool(json.load(response).get('scraper'))
     except Exception:return False
 JOB_LOCK=threading.Lock()
