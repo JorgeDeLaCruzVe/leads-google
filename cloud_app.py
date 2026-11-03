@@ -130,17 +130,22 @@ def public_url(value):
     return value
 
 class PaiLinks(HTMLParser):
-    """Collect search listing links and ordinary next-page links from pai.pt."""
+    """Collect PAI business cards and pagination links, including rel=next."""
     def __init__(self,base):
-        super().__init__();self.base=base;self.links=[];self.pages=[];self.current=None;self.parts=[]
+        super().__init__()
+        self.base=base;self.links=[];self.pages=[];self.current=None;self.parts=[]
     def handle_starttag(self,tag,attrs):
         if tag!='a':return
         a=dict(attrs);href=a.get('href','')
         if not href:return
         absolute=urljoin(self.base,href);p=urlparse(absolute)
-        if not p.hostname or not p.hostname.endswith('.pai.pt') and p.hostname!='pai.pt':return
+        if p.hostname not in ('pai.pt','www.pai.pt'):return
+        rel=a.get('rel','') or ''
+        if isinstance(rel,(list,tuple)):rel=' '.join(rel)
         if p.path.startswith('/searches'):
-            if 'page=' in p.query or 'next' in a.get('rel',''):self.pages.append(absolute)
+            query=dict(parse_qsl(p.query,keep_blank_values=True))
+            if 'next' in rel.lower() or any('page' in k.lower() for k in query) or 'pagination' in (a.get('class','') or '').lower():
+                self.pages.append(absolute)
             return
         if not p.path.startswith('/paginas/'):return
         self.current=absolute;self.parts=[]
@@ -152,6 +157,7 @@ class PaiLinks(HTMLParser):
             if len(name)>3 and not name.lower().startswith(('ver mais','website','visitar','saber mais','ver detalhes')):
                 self.links.append((name,self.current))
             self.current=None
+
 
 class PaiEmailParser(HTMLParser):
     """Find email addresses exposed by public 'Enviar email' links/buttons."""
@@ -198,14 +204,16 @@ def directory_rows(url,limit=20):
         if urlparse(page).hostname in ('www.pai.pt','pai.pt') and urlparse(page).path.startswith('/searches'):
             links=PaiLinks(page);links.feed(content)
             signature=tuple(sorted(link for _,link in links.links))
-            if signature and signature in page_signatures:break
+            if signature and signature in page_signatures:continue
             if signature:page_signatures.add(signature)
             # Some PAI layouts omit ordinary next-page anchors. Try the site's page query parameter.
-            if len(visited_details)<limit:
+            if len(visited_details)<limit and not links.pages:
                 parsed=urlparse(page)
                 params=dict(parse_qsl(parsed.query,keep_blank_values=True))
-                number=int(params.get('page','1')) if params.get('page','1').isdigit() else 1
-                params['page']=str(number+1)
+                current_page=next((v for k,v in params.items() if k.lower()=='page' or k.lower().endswith('[page]')),'1')
+                number=int(current_page) if current_page.isdigit() else 1
+                page_key=next((k for k in params if k.lower().endswith('[page]') or k.lower()=='page'),'page')
+                params[page_key]=str(number+1)
                 next_url=urlunparse(parsed._replace(query=urlencode(params)))
                 if next_url not in visited_pages and next_url not in pending:pending.append(next_url)
             for next_page in links.pages:
