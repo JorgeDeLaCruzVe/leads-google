@@ -230,6 +230,8 @@ def directory_rows(url,limit=20):
     seen_signatures=set()
     repeated_pages=0
     failed_pages=0
+    pages_scanned=0
+    stop_reason='límite de páginas'
     parsed_url=urlparse(url)
     is_pai_search=parsed_url.hostname in ('pai.pt','www.pai.pt') and parsed_url.path.startswith('/searches')
     if is_pai_search:
@@ -244,11 +246,14 @@ def directory_rows(url,limit=20):
     for page in pages:
         if page in visited_pages:continue
         visited_pages.add(page)
+        pages_scanned+=1
         try:content=fetch(page)
         except (ValueError,OSError,HTTPError):
             if page==url:raise
             failed_pages+=1
-            if failed_pages>=5:break
+            if failed_pages>=5:
+                stop_reason='5 páginas inaccesibles consecutivas'
+                break
             continue
         failed_pages=0
         parser=DirectoryParser();parser.base=page;parser.feed(content)
@@ -260,7 +265,9 @@ def directory_rows(url,limit=20):
         if signature and signature in seen_signatures:
             repeated_pages+=1
             # A single repeated page must not terminate a large extraction.
-            if repeated_pages>=5:break
+            if repeated_pages>=12:
+                stop_reason='12 páginas repetidas o vacías consecutivas'
+                break
             continue
         repeated_pages=0
         if signature:seen_signatures.add(signature)
@@ -289,7 +296,9 @@ def directory_rows(url,limit=20):
                 pass
             row['website']=external_company_website(row.get('website',''))
             combined.append(row)
-            if len(visited_details)>=limit:break
+            if len(visited_details)>=limit:
+            stop_reason='objetivo alcanzado'
+            break
         if len(visited_details)>=limit:break
     unique={}
     for row in combined:
@@ -301,12 +310,14 @@ def directory_rows(url,limit=20):
                 if row.get(field) and not original.get(field):original[field]=row[field]
             if row.get('emails') and original.get('emails') and row['emails']!=original['emails']:
                 original['emails']='; '.join(sorted(set(filter(None,re.split(r'[;,\s]+',original['emails']+';'+row['emails'])))))
+    directory_rows.diagnostics={'pages':pages_scanned,'reason':stop_reason,'unique':len(unique)}
     return list(unique.values())[:limit]
 
 def run_scrape(job,token,owner):
     try:
         if job.get('source') in ('url','paginas_amarelas'):
             rows=directory_rows(job['url'],job.get('limit',20))
+            directory_diagnostics=getattr(directory_rows,'diagnostics',{})
             timed_out=False
             if not rows:raise RuntimeError('La página se cargó, pero no se reconocieron fichas de empresas. Es posible que pai.pt utilice una estructura HTML diferente o que el acceso automático esté limitado.')
         else:
@@ -353,7 +364,9 @@ def run_scrape(job,token,owner):
             code,_=call('/rest/v1/leads',token,'POST',{'id':key,'owner_id':owner,'payload':merged},{'Prefer':'resolution=merge-duplicates,return=minimal'})
             if code not in (200,201,204): raise RuntimeError('No se pudieron guardar los contactos')
             added+=not bool(old)
-        job.update(status='Parcial' if timed_out or len(rows)<job.get('limit',20) else 'Completada',added=added,detail=f'{len(rows)} de {job.get("limit",20)} solicitados, {added} contactos nuevos'+(' (tiempo límite alcanzado)' if timed_out else '; la fuente no ofreció más resultados' if len(rows)<job.get('limit',20) else ''))
+        diagnostics=directory_diagnostics if job.get('source') in ('url','paginas_amarelas') else {}
+        info=(f'; {diagnostics["pages"]} páginas revisadas; motivo: {diagnostics["reason"]}' if diagnostics else '')
+        job.update(status='Parcial' if timed_out or len(rows)<job.get('limit',20) else 'Completada',added=added,detail=f'{len(rows)} de {job.get("limit",20)} solicitados, {added} contactos nuevos'+info+(' (tiempo límite alcanzado)' if timed_out else '; no se alcanzó el objetivo' if len(rows)<job.get('limit',20) else ''))
     except Exception as exc:
         job.update(status='Error',detail=str(exc)[:450])
     finally:
