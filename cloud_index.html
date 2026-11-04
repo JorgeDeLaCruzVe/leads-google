@@ -95,6 +95,7 @@ $('#retryEngine').onclick=async()=>{
  retry.disabled=true;
  retry.textContent='↻ Reconectando…';
  $('#engine').textContent='◌ Despertando servidor extractor (hasta 70 s)…';
+ toast('Reconexión iniciada. Espera hasta 70 segundos.');
  try{
   const response=await api('/api/engine/reconnect');
   if(response.connected){
@@ -102,7 +103,8 @@ $('#retryEngine').onclick=async()=>{
    $('#searchButton').disabled=false;
    toast('Motor reconectado. Ya puedes buscar negocios.');
   }else{
-   $('#engine').textContent='◌ Motor sin respuesta';
+   $('#engine').textContent='◌ Motor sin respuesta · intenta de nuevo';
+   $('#searchButton').disabled=true;
    toast(response.message||'El motor no respondió.');
   }
  }catch(err){
