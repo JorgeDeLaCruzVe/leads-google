@@ -1,0 +1,6 @@
+# Original gosom scraper — isolated Docker image
+# This is a build definition, NOT a publicly deployable service by itself.
+# The upstream HTTP API must be placed behind authenticated access before exposure.
+FROM gosom/google-maps-scraper:latest
+EXPOSE 8080
+CMD ["-data-folder", "/tmp/gmapsdata"]
